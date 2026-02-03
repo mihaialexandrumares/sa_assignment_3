@@ -15,7 +15,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
+          seedColor: Colors.deepPurple.shade600,
           brightness: Brightness.light,
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -25,9 +25,9 @@ class MyApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
-          prefixIconColor: Colors.indigo,
+          prefixIconColor: Colors.deepPurple.shade600,
         ),
-        cardTheme: CardThemeData(
+        cardTheme: CardTheme(
           elevation: 2,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           color: Colors.white,
@@ -45,14 +45,18 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // NOTE: Ensure your backend is running on port 8080
-  // For Android Emulator use 'http://10.0.2.2:8080/api/books'
-  // For iOS/Web use 'http://localhost:8080/api/books'
-  final String baseUrl = 'http://localhost:8080/api/books';
+  final String apiBase = 'http://localhost:8080';
+
+  late String booksUrl;
+  late String aiUrl;
 
   List<dynamic> books = [];
   List<String> featuredBooks = [];
   List<String> logs = [];
+
+  List<Map<String, String>> chatHistory = [];
+  final chatController = TextEditingController();
+  bool isAiLoading = false;
 
   final titleController = TextEditingController();
   final authorController = TextEditingController();
@@ -63,14 +67,16 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    booksUrl = '$apiBase/api/books';
+    aiUrl = '$apiBase/api/ai/ask';
     loadBooks();
   }
 
   Future<void> loadBooks() async {
     setState(() => isLoading = true);
     try {
-      var response = await http.get(Uri.parse(baseUrl));
-      var featuredResponse = await http.get(Uri.parse('$baseUrl/featured'));
+      var response = await http.get(Uri.parse(booksUrl));
+      var featuredResponse = await http.get(Uri.parse('$booksUrl/featured'));
 
       setState(() {
         books = json.decode(response.body);
@@ -99,7 +105,7 @@ class _HomePageState extends State<HomePage> {
 
     try {
       await http.post(
-        Uri.parse(baseUrl),
+        Uri.parse(booksUrl),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'title': titleController.text,
@@ -131,7 +137,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      await http.delete(Uri.parse('$baseUrl/$id'));
+      await http.delete(Uri.parse('$booksUrl/$id'));
 
       setState(() {
         logs.add(' > [FACADE] Book deleted through facade');
@@ -144,6 +150,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
@@ -153,6 +160,173 @@ class _HomePageState extends State<HomePage> {
   void _showSuccessSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
+  }
+
+  void _showChatModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (_, controller) {
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: StatefulBuilder(
+                builder: (context, setModalState) {
+                  void handleSendMessage() {
+                    if (chatController.text.isNotEmpty) {
+                      String msg = chatController.text;
+
+                      setModalState(() {
+                        chatHistory.add({'role': 'user', 'message': msg});
+                        isAiLoading = true;
+                      });
+                      chatController.clear();
+
+                      http.post(
+                        Uri.parse(aiUrl),
+                        headers: {'Content-Type': 'application/json'},
+                        body: json.encode({'prompt': msg}),
+                      ).then((response) {
+                        setModalState(() {
+                          isAiLoading = false;
+                          if (response.statusCode == 200) {
+                            var data = json.decode(response.body);
+                            chatHistory.add({'role': 'ai', 'message': data['answer']});
+                          } else {
+                            chatHistory.add({'role': 'error', 'message': 'AI Error: ${response.statusCode}'});
+                          }
+                        });
+                      }).catchError((e) {
+                        setModalState(() {
+                          isAiLoading = false;
+                          chatHistory.add({'role': 'error', 'message': 'Connection Error'});
+                        });
+                      });
+                    }
+                  }
+
+                  return Column(
+                    children: [
+                      Container(
+                        margin: EdgeInsets.symmetric(vertical: 10),
+                        height: 5,
+                        width: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        child: Row(
+                          children: [
+                            Icon(Icons.chat,color:Colors.deepPurple.shade600),
+                            SizedBox(width: 10),
+                            Text("Library AI Assistant", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            Spacer(),
+                            IconButton(
+                              icon: Icon(Icons.close),
+                              onPressed: () => Navigator.pop(context),
+                            )
+                          ],
+                        ),
+                      ),
+                      Divider(),
+                      Expanded(
+                        child: chatHistory.isEmpty
+                            ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.chat_bubble_outline, size: 48, color: Colors.grey[300]),
+                              SizedBox(height: 10),
+                              Text("Ask me anything about books!", style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        )
+                            : ListView.builder(
+                          controller: controller,
+                          padding: EdgeInsets.all(16),
+                          itemCount: chatHistory.length,
+                          itemBuilder: (context, index) {
+                            final msg = chatHistory[index];
+                            final isUser = msg['role'] == 'user';
+                            return Align(
+                              alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                margin: EdgeInsets.only(bottom: 12),
+                                padding: EdgeInsets.all(12),
+                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                                decoration: BoxDecoration(
+                                  color: isUser ? Colors.deepPurple.shade600 : Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(16).copyWith(
+                                    bottomRight: isUser ? Radius.zero : Radius.circular(16),
+                                    bottomLeft: !isUser ? Radius.zero : Radius.circular(16),
+                                  ),
+                                ),
+                                child: Text(
+                                  msg['message'] ?? '',
+                                  style: TextStyle(
+                                    color: isUser ? Colors.white : Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      // Input Area
+                      if (isAiLoading)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: LinearProgressIndicator(),
+                        ),
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(16, 8, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: chatController,
+                                decoration: InputDecoration(
+                                  hintText: "Ask AI...",
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                ),
+                                onSubmitted: (_) => handleSendMessage(),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            CircleAvatar(
+                              backgroundColor: Colors.deepPurple.shade600,
+                              child: IconButton(
+                                icon: Icon(Icons.send, color: Colors.white, size: 20),
+                                onPressed: handleSendMessage,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -168,8 +342,15 @@ class _HomePageState extends State<HomePage> {
             Text('Design Patterns Demo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ],
         ),
-        backgroundColor: Colors.indigo,
+        backgroundColor: Colors.deepPurple.shade600,
         elevation: 0,
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showChatModal,
+        label: Text('Ask AI'),
+        icon: Icon(Icons.chat),
+        backgroundColor: Colors.deepPurple.shade600,
+        foregroundColor: Colors.white,
       ),
       body: isLoading && books.isEmpty
           ? Center(child: CircularProgressIndicator())
@@ -185,6 +366,7 @@ class _HomePageState extends State<HomePage> {
             _buildFeaturedSection(),
             SizedBox(height: 24),
             _buildBookList(),
+            SizedBox(height: 80),
           ],
         ),
       ),
@@ -199,7 +381,7 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Add New Book',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.indigo)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.deepPurple.shade600)),
             SizedBox(height: 16),
             TextField(
               controller: titleController,
@@ -242,7 +424,7 @@ class _HomePageState extends State<HomePage> {
                 icon: Icon(Icons.add_circle_outline),
                 label: Text('Add to Library', style: TextStyle(fontSize: 16)),
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.indigo,
+                  backgroundColor: Colors.deepPurple.shade600,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
@@ -263,7 +445,7 @@ class _HomePageState extends State<HomePage> {
           width: double.infinity,
           padding: EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Color(0xFF1E1E1E), // Dark terminal background
+            color: Color(0xFF1E1E1E),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade300),
           ),
@@ -299,8 +481,8 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
             Chip(
               label: Text('${books.length} items'),
-              backgroundColor: Colors.indigo.shade50,
-              labelStyle: TextStyle(color: Colors.indigo),
+              backgroundColor:Colors.deepPurple.shade50,
+              labelStyle: TextStyle(color:Colors.deepPurple.shade600),
             )
           ],
         ),
@@ -317,10 +499,10 @@ class _HomePageState extends State<HomePage> {
               child: ListTile(
                 contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                 leading: CircleAvatar(
-                  backgroundColor: Colors.indigo.shade100,
+                  backgroundColor: Colors.deepPurple.shade100,
                   child: Text(
                     book['title'][0].toString().toUpperCase(),
-                    style: TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold),
+                    style: TextStyle(color:Colors.deepPurple.shade600, fontWeight: FontWeight.bold),
                   ),
                 ),
                 title: Text(book['title'], style: TextStyle(fontWeight: FontWeight.w600)),
